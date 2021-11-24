@@ -74,6 +74,7 @@ double lteSent = 0.0;
 int totalPacketSent = 0;
 double wifiSent = 0.0;
 
+
 std::string aggPath = "wifiOnly";    // Three options are available: wifiOnly, lteOnly, and lteAndWifi
 
 //---------------------------------------Tag------------------------------------//
@@ -238,6 +239,7 @@ TimeTag::GetSimpleValue (void) const
 
 //------------------------------------Tunneling---------------------------------//
 int UsedTunnelPort = 100;
+int usedTimeoutPeriod = 100;
 
 class Tunnel
 {
@@ -283,8 +285,27 @@ class Tunnel
     std::list<MarkedPacket> packetQueue;
     int packet_number;
     EventId TimeoutEventId;
-    int timeout_period = 100; //milliseconds
+    int timeout_period; //milliseconds
     uint32_t counter;
+    ofstream delayStream;
+    ofstream outSeqStream;
+    ofstream recvSeq;
+
+    void deliverPacket(MarkedPacket packet, bool delayed) {
+        uint32_t waiting_time = 0;
+        uint32_t now = (uint32_t)Simulator::Now ().GetMilliSeconds();
+        if (delayed) {
+            waiting_time = now - packet.enter_time;
+        }
+        delayStream << to_string(now) << "\t" << to_string(waiting_time) << std::endl;
+        outSeqStream << to_string(now) << "\t" << to_string(packet.seq_number) << std::endl;
+        if(packet.tunnel_number==0){
+            m_msIfc0Tap->Receive (packet.m_packet, 0x0800, m_msIfc0Tap->GetAddress (), m_msIfc0Tap->GetAddress (), NetDevice::PACKET_HOST);
+        }
+        else {
+            m_msIfc1Tap->Receive (packet.m_packet, 0x0800, m_msIfc1Tap->GetAddress (), m_msIfc1Tap->GetAddress (), NetDevice::PACKET_HOST);
+        }
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
     // When Timeout happens, deliver the in-ordering timeout packet to the upper layer from the queue  //
@@ -329,21 +350,33 @@ class Tunnel
 
                 MarkedPacket packet_temp = packetQueue.front();
 
-                
-
-
-
-
-
-
-
-
-
-
-
-                // EDIT END
-
+                // transmit timeOut packet
+                if (packet_temp.seq_number == packet_id) {
+                    deliverPacket(packet_temp, true);
+                    packetQueue.pop_front();
+                    packet_id++;
+                // transmit any packets before the timeOut packet too
+                } else if (packet_temp.seq_number < packet_id) {
+                    deliverPacket(packet_temp, true);
+                    packetQueue.pop_front();
+                // sequence number gap
+                } else {
+                    uint32_t waiting_time = (uint32_t)Simulator::Now ().GetMilliSeconds() - packet_temp.enter_time;
+                    // start a new timeout if there's still time left
+                    if (waiting_time < (uint32_t) timeout_period) {
+                        TimeoutEventId = Simulator::Schedule(MilliSeconds((uint32_t) timeout_period - waiting_time),&Tunnel::Timeout,this, packet_temp.seq_number);
+                        break;
+                    }
+                    // transmit out of sequence packets if they've timed out too, but this probably should never happen
+                    else {
+                        deliverPacket(packet_temp, true);
+                        packetQueue.pop_front();
+                        packet_id = packet_temp.seq_number + 1;
+                    }
+                }
             } 
+            packet_number = packet_id + 1;
+                            // EDIT END
         } 
         
     }
@@ -369,7 +402,11 @@ class Tunnel
         new_Packet.tunnel_number = tunnel_number;
         new_Packet.enter_time = (uint32_t)Simulator::Now ().GetMilliSeconds ();
         new_Packet.seq_number = (uint32_t)tagCopy.GetSimpleValue();
+        // EDIT START
 
+        recvSeq << to_string(new_Packet.enter_time) << "\t" << new_Packet.seq_number << std::endl;
+        
+        // about 70 lines would work.
         //////////////////////////////////////////
         // Cis 549 Project #4   Problem 1
         /////////////////////////////////////////
@@ -381,12 +418,12 @@ class Tunnel
         // When delivering the packet to the upper layer, check the tunnel number where the packet came through
         // Use folowing code to deliver the packet to upper layer
         ///////////////////
-        // if(packet_temp.tunnel_number==0){
-        //       m_msIfc0Tap->Receive (packet_temp.m_packet, 0x0800, m_msIfc0Tap->GetAddress (), m_msIfc0Tap->GetAddress (), NetDevice::PACKET_HOST);
-        //    }
-        //    else{
-        //        m_msIfc1Tap->Receive (packet_temp.m_packet, 0x0800, m_msIfc1Tap->GetAddress (), m_msIfc1Tap->GetAddress (), NetDevice::PACKET_HOST);
-        //    }
+        // packet wanted
+        if (new_Packet.seq_number == (uint32_t) packet_number) {
+            // deliver packet to upper layer
+            deliverPacket(new_Packet, false);
+            packet_number++;
+
         //////////////////
         // Once a packet is delivered to uppler layer, check the next packets in the queue, if some of them can be delivered as well
         //
@@ -399,7 +436,32 @@ class Tunnel
         // TimeoutEventId = Simulator::Schedule(MilliSeconds(waiting_time),&Tunnel::Timeout,this,packet_temp.seq_number);
         //
         /////////////////////////////////////////////////////////////
-        //
+
+            // examine queue
+            while (!packetQueue.empty()) {
+                MarkedPacket packetFromQueue = packetQueue.front();
+                // deliver packet if in sequence, updated queue and sequence
+                if (packetFromQueue.seq_number == (uint32_t) packet_number) {
+                    Simulator::Cancel(TimeoutEventId);
+                    deliverPacket(packetFromQueue, true);
+                    packetQueue.pop_front();
+                    packet_number++;
+                // out of sequence jump in queue
+                } else {
+                    uint32_t waiting_time = (uint32_t)Simulator::Now ().GetMilliSeconds() - packetFromQueue.enter_time;
+                    // packet still has time left
+                    if (waiting_time < (uint32_t) timeout_period) {
+                        Simulator::Cancel(TimeoutEventId);
+                        TimeoutEventId = Simulator::Schedule(MilliSeconds((uint32_t) timeout_period - waiting_time),&Tunnel::Timeout,this, packetFromQueue.seq_number);
+                    }
+                    // packet's already been sitting there longer than timeout (this should probably never happen)
+                    else {
+                        Timeout(packetFromQueue.seq_number);
+                    }
+                    break;
+                }
+            }
+        ///////////////////////////////////////////////////////////////
         // If the incoming packet sequence number is not the packet you are waiting for then insert the packet in the queue in-order
         // You may consider using the following functions:
         /////////////
@@ -408,20 +470,23 @@ class Tunnel
         // packetQueue.end()
         // packetQueue.insert()
         ////////////////////////////////////////////////////////////////
-
-        // EDIT START
-        // about 70 lines would work.
-
-
-
-
-
-
-
-
-
-
-
+        // old packets get delivered too but don't incremenent packet_number
+        } else if (new_Packet.seq_number < (uint32_t) packet_number) {
+            deliverPacket(new_Packet, false);
+        } else {
+            // gives the in order location to insert newPacket
+            auto loc = std::lower_bound(packetQueue.begin(), packetQueue.end(), new_Packet, 
+                [](const MarkedPacket& packetA, const MarkedPacket& packetB) {
+                    return packetA.seq_number < packetB.seq_number;
+                });
+            packetQueue.insert(loc, new_Packet);
+            // hopefully this triggers when TimeoutEventId hasn't been scheduled
+            if (TimeoutEventId.IsExpired()) {
+                TimeoutEventId = Simulator::Schedule(MilliSeconds((uint32_t) timeout_period),&Tunnel::Timeout,this, new_Packet.seq_number);
+            }
+        }
+        //
+ 
         // EDIT END
 
     }
@@ -590,12 +655,12 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
 
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
-            // QueueRecv (packet,0); // Use this line after implementing QueueRecv() and Timeout() functions
+            QueueRecv (packet,0); // Use this line after implementing QueueRecv() and Timeout() functions
             //                  ---  Tihis is the tunnel id. 0 means LTE path and 1 means WiFi path
 
             // remove this line after implementing QueueRecv() and Timeout() functions
             // The code below directly deliver the packet to upper layer instead of inserting in to the queue
-            m_msIfc0Tap->Receive (packet, 0x0800, m_msIfc0Tap->GetAddress (), m_msIfc0Tap->GetAddress (), NetDevice::PACKET_HOST);
+            // m_msIfc0Tap->Receive (packet, 0x0800, m_msIfc0Tap->GetAddress (), m_msIfc0Tap->GetAddress (), NetDevice::PACKET_HOST);
             ////////////////////////////////////////////////////
         }
         
@@ -629,12 +694,12 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
 
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
-            // QueueRecv (packet,1); // Use this line after implementing QueueRecv() and Timeout() functions
+            QueueRecv (packet,1); // Use this line after implementing QueueRecv() and Timeout() functions
             //                  ---  Tihis is the tunnel id. 0 means LTE path and 1 means WiFi path
 
             // remove this line after implementing QueueRecv() and Timeout() functions
             // The code below directly deliver the packet to upper layer instead of inserting in to the queue
-            m_msIfc1Tap->Receive (packet, 0x0800, m_msIfc1Tap->GetAddress (), m_msIfc1Tap->GetAddress (), NetDevice::PACKET_HOST);
+            // m_msIfc1Tap->Receive (packet, 0x0800, m_msIfc1Tap->GetAddress (), m_msIfc1Tap->GetAddress (), NetDevice::PACKET_HOST);
             ////////////////////////////////////////////////////
         }
         
@@ -643,13 +708,24 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
 public:
     Tunnel () {
         // We first initialize the parameters related to the reordering process here//
-        packet_number = -1;
+        packet_number = 0;
         counter = 0;
         m_rng = CreateObject<UniformRandomVariable> ();
         TunnelPort = UsedTunnelPort;
         UsedTunnelPort++;
+        timeout_period = usedTimeoutPeriod;
+        delayStream.open(prefix_file_name + "-queueDelay.dat");
+        outSeqStream.open(prefix_file_name + "-deliveredSequenceNumbers.dat");
+        recvSeq.open(prefix_file_name + "-recievedSequenceNumbers.dat");
 
     }
+    
+    void writeOutput () {
+        delayStream.close();
+        outSeqStream.close();
+        recvSeq.close();
+    }
+
     void SetUp (Ptr<Node> rt, Ptr<Node> msIfc0, Ptr<Node> msIfc1,
                 Ipv4Address rt0Addr, Ipv4Address rt1Addr, Ipv4Address msIfc0Addr, Ipv4Address msIfc1Addr, Ipv4Address v1Addr, Ipv4Address v2Addr)
     //: m_rtAddress (rtAddr), m_msIfc0Address (msIfc0Addr), m_msIfc1Address (msIfc1Addr)
@@ -731,13 +807,13 @@ Ptr<OutputStreamWrapper> rtoStream;
 Ptr<OutputStreamWrapper> nextTxStream;
 Ptr<OutputStreamWrapper> nextRxStream;
 Ptr<OutputStreamWrapper> inFlightStream;
-vector<Ptr<OutputStreamWrapper>> throughputStream;
+vector<Ptr<OutputStreamWrapper> > throughputStream;
 Ptr<OutputStreamWrapper> throughputAllDlStream;
 uint32_t cWndValue;
 uint32_t ssThreshValue;
 
 
-vector<Ptr<PacketSink>> sink;
+vector<Ptr<PacketSink> > sink;
 vector<uint64_t> lastTotalRx;
 int lastTotalTxPacket = 0;
 int lastTotalRxPacket = 0;
@@ -825,6 +901,7 @@ int main(int argc, char *argv[]) {
     cmd.AddValue ("lteTotalPRBcount", "Total number of PRB for LTE (default : 100)", lteTotalPRBcount);
     cmd.AddValue ("wifiChannelWidth", "Wi-Fi channel width (Default: 40 (unit: MHz))", wifiChannelWidth);
     cmd.AddValue ("aggPath", "Path selection for the Aggregation( wifiOnly, lteOnly, or lteAndWifi", aggPath);
+    cmd.AddValue ("inOrderTimeout", "Timeout before transmitting out-of-order packet (Default: 100 (unit:ms))", usedTimeoutPeriod);
 
     cmd.Parse (argc, argv);
 
@@ -1370,6 +1447,12 @@ int main(int argc, char *argv[]) {
         flowmonHelper.SerializeToXmlFile (prefix_file_name + ".flowmon", false, false);
     }
     Simulator::Destroy();
+
+    for (uint16_t i = 0; i < ueNodes.GetN(); i++) {
+        if (TunnelEnabled && (Scenario == AGGREGATE)) {
+            tunnel[i].writeOutput();
+        }
+    }
 //----------------------------------------------------------------------//
     return EXIT_SUCCESS;
 }
