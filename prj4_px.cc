@@ -61,6 +61,10 @@ bool UplinkEnabled = false;
 std::string prefix_file_name = "scratch/MPIP_Tracing"; //Change here
 int Scenario = LTE;
 uint16_t numberUE = 1;
+std::string prefix_file_name_prob2 = "output/"; // Change here
+
+// Global variables for path delay (in ms) and path throughput (in Mbps)
+double wifi_delay, lte_delay, wifi_bits_rcved, lte_bits_rcved, wifi_prev_bits_rcved, lte_prev_bits_rcved, wifi_throughput, lte_throughput = 0;
 
 // node image resource id
 uint32_t serverImgId, routerImgId, pgwImgId, enbImgId, wifiapImgId, ueImgId;
@@ -567,6 +571,10 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
 
                 // EDIT START
 
+                // Use algorithm number 2
+                // Print stuff to an output file
+                // Plot this output file with gnuplot
+
                 // TEST #3 ::::: split
                 // Use both LTE and Wi-Fi networks are simultaniously used by a single traffic flow.
                 // This sample steering send one packet to LTE path and another packet to WiFi path and repeates
@@ -653,6 +661,9 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
             // cout << "One-way delay= " << Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue() << " ms" << endl;
             ///////////////////////////////////////////
 
+            lte_delay = Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue();
+            lte_bits_rcved += packet->GetSize() * 8;
+
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
             QueueRecv (packet,0); // Use this line after implementing QueueRecv() and Timeout() functions
@@ -691,6 +702,9 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
             // cout << "UE-DL-WiFi: Packet Seq#= " << (uint32_t)tagCopy2.GetSimpleValue() << endl;
             // cout << "One-way delay= " << Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue() << " ms" << endl;
             ///////////////////////////////////////////
+
+            wifi_delay = Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue();
+            wifi_bits_rcved += packet->GetSize() * 8;
 
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
@@ -836,6 +850,17 @@ void CalculateThroughput()
     *throughputAllDlStream->GetStream ()  << Simulator::Now ().GetSeconds () << " " << totalDlThroughput << std::endl;
 
     Simulator::Schedule (MilliSeconds (THROUGHPUT_MEASUREMENT_INTERVAL_MS), &CalculateThroughput); // Measurement Interval THROUGHPUT_MEASUREMENT_INTERVAL_MS milliseconds
+}
+
+void newCalculateThroughput()
+{
+    lte_throughput = (lte_bits_rcved - lte_prev_bits_rcved) * 2;
+    wifi_throughput = (wifi_bits_rcved - wifi_prev_bits_rcved) * 2;
+
+    lte_prev_bits_rcved = lte_bits_rcved;
+    wifi_prev_bits_rcved = wifi_bits_rcved;
+
+    Simulator::Schedule (MilliSeconds (500), &CalculateThroughput); // Measurement Interval 500 milliseconds
 }
 
 
@@ -1422,6 +1447,7 @@ int main(int argc, char *argv[]) {
 
     // User downlink throughput measurement (bps)
     Simulator::Schedule (Seconds (0.1), &CalculateThroughput);
+    Simulator::Schedule (Seconds (0.5), &newCalculateThroughput);
     ////////////////////////////////////////////////////////////////////
 
 
