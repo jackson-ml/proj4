@@ -584,41 +584,41 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
                 // EDIT START
 
                 // Use Wifi and LTE BWs and RTTs to calculate which path to send packets over first.
-                // if (lastPath.compare("none") == 0) {
-                //   double lte_path_prob = ((lte_bw / (lte_bw + wifi_bw)) + (wifi_delay / (wifi_delay + lte_delay))) / 2;
+                if (lastPath.compare("none") == 0) {
+                  double lte_path_prob = ((lte_bw / (lte_bw + wifi_bw)) + (wifi_delay / (wifi_delay + lte_delay))) / 2;
                   
-                //   if (lte_path_prob > 0.5) {
-                //     lastPath = "lte";
-                //     m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
-                //     cout << "Path selected: LTE" << endl;
-                //   } else {
-                //     lastPath = "wifi";
-                //     m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
-                //     cout << "Path selected: Wifi" << endl;
-                //   }
-                // }
-
-                // if (lastPath.compare("wifi") == 0 && wifi_delay_increases <= 5) {
-                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
-                // } else if (lastPath.compare("lte") == 0 && lte_delay_increases <=5) {
-                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
-                // } else if (lastPath.compare("wifi") == 0 && wifi_delay_increases > 5) {
-                //   wifi_prev_delay = 0;
-                //   wifi_delay_increases = 0;
-                //   lastPath = "lte";
-                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
-                // } else {
-                //   lte_prev_delay = 0;
-                //   lte_delay_increases = 0;
-                //   lastPath = "wifi";
-                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
-                // }
-
-                if (wifi_delay <= lte_delay) {
-                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
-                } else {
-                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                  if (lte_path_prob > 0.5) {
+                    lastPath = "lte";
+                    m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                    cout << "Path selected: LTE" << endl;
+                  } else {
+                    lastPath = "wifi";
+                    m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                    cout << "Path selected: Wifi" << endl;
+                  }
                 }
+
+                if (lastPath.compare("wifi") == 0 && wifi_delay_increases <= 5) {
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                } else if (lastPath.compare("lte") == 0 && lte_delay_increases <=5) {
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                } else if (lastPath.compare("wifi") == 0 && wifi_delay_increases > 5) {
+                  wifi_prev_delay = 0;
+                  wifi_delay_increases = 0;
+                  lastPath = "lte";
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                } else {
+                  lte_prev_delay = 0;
+                  lte_delay_increases = 0;
+                  lastPath = "wifi";
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                }
+
+                // if (wifi_delay <= lte_delay) {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                // } else {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                // }
 
                 // double rand_num = rand() % 10;
 
