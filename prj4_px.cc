@@ -62,6 +62,22 @@ std::string prefix_file_name = "scratch/MPIP_Tracing"; //Change here
 int Scenario = LTE;
 uint16_t numberUE = 1;
 
+// Global variables for path delay (in ms) and path throughput (in Mbps)
+double wifi_delay, lte_delay, wifi_prev_delay, lte_prev_delay = 0;
+double wifi_bits_rcved, lte_bits_rcved, wifi_prev_bits_rcved, lte_prev_bits_rcved = 0;
+double lte_bits_sent, wifi_bits_sent, lte_bits_sent_prev, wifi_bits_sent_prev = 0;
+double wifi_delay_increases, lte_delay_increases = 0;
+double lte_bw = 20;
+double wifi_bw = 40;
+double wifi_throughput, lte_throughput = 0;
+std::string lastPath = "none";
+ofstream dlyWifi;
+ofstream dlyLTE;
+ofstream rtInputToLTE;
+ofstream rtInputToWifi;
+ofstream ueLinkThpLTE;
+ofstream ueLinkThpWifi;
+
 // node image resource id
 uint32_t serverImgId, routerImgId, pgwImgId, enbImgId, wifiapImgId, ueImgId;
 
@@ -567,20 +583,55 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
 
                 // EDIT START
 
-                // TEST #3 ::::: split
-                // Use both LTE and Wi-Fi networks are simultaniously used by a single traffic flow.
-                // This sample steering send one packet to LTE path and another packet to WiFi path and repeates
+                // Use Wifi and LTE BWs and RTTs to calculate which path to send packets over first.
+                // if (lastPath.compare("none") == 0) {
+                //   double lte_path_prob = ((lte_bw / (lte_bw + wifi_bw)) + (wifi_delay / (wifi_delay + lte_delay))) / 2;
+                  
+                //   if (lte_path_prob > 0.5) {
+                //     lastPath = "lte";
+                //     m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                //     cout << "Path selected: LTE" << endl;
+                //   } else {
+                //     lastPath = "wifi";
+                //     m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                //     cout << "Path selected: Wifi" << endl;
+                //   }
+                // }
 
-                if ( totalPacketSent % 2 == 0 ) // toggle the transmission path between LTE and WiFi
-                {
-                    // Use LTE path for DL traffic
-                    m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                // if (lastPath.compare("wifi") == 0 && wifi_delay_increases <= 5) {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                // } else if (lastPath.compare("lte") == 0 && lte_delay_increases <=5) {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                // } else if (lastPath.compare("wifi") == 0 && wifi_delay_increases > 5) {
+                //   wifi_prev_delay = 0;
+                //   wifi_delay_increases = 0;
+                //   lastPath = "lte";
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                // } else {
+                //   lte_prev_delay = 0;
+                //   lte_delay_increases = 0;
+                //   lastPath = "wifi";
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                // }
+
+                if (wifi_delay <= lte_delay) {
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                } else {
+                  m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
                 }
-                else
-                {
-                    // use Wi-Fi path DL traffic
-                    m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
-                }
+
+                // double rand_num = rand() % 10;
+
+                // double lte_path_prob = ((lte_throughput / (lte_throughput + wifi_throughput)) + (wifi_delay / (wifi_delay + lte_delay))) / 2;
+                // cout << "LTE thp: " << lte_throughput << " Wifi thp" << wifi_throughput << " LTE delay: " << lte_delay << " Wifi delay: " << wifi_delay << endl;
+                
+                // if (rand_num / 10.0 <= lte_path_prob) {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc0Address, TunnelPort));
+                //   cout << "Rand num was " << rand_num << " Path selected: LTE" << endl;
+                // } else {
+                //   m_rtSocket->SendTo (packet, 0, InetSocketAddress (m_msIfc1Address, TunnelPort));
+                //   cout << "Rand num was " << rand_num << " Path selected: Wifi" << endl;
+                // }
 
                 // EDIT END
             }
@@ -653,6 +704,13 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
             // cout << "One-way delay= " << Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue() << " ms" << endl;
             ///////////////////////////////////////////
 
+            lte_delay = Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue();
+            if (lte_delay > lte_prev_delay) {
+              lte_prev_delay = lte_delay;
+              lte_delay_increases++;
+            }
+            lte_bits_rcved += packet->GetSize() * 8;
+
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
             QueueRecv (packet,0); // Use this line after implementing QueueRecv() and Timeout() functions
@@ -691,6 +749,13 @@ bool rtVirtualSend (Ptr<Packet> packet, const Address& source, const Address& de
             // cout << "UE-DL-WiFi: Packet Seq#= " << (uint32_t)tagCopy2.GetSimpleValue() << endl;
             // cout << "One-way delay= " << Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue() << " ms" << endl;
             ///////////////////////////////////////////
+
+            wifi_delay = Simulator::Now().GetMilliSeconds()-(uint32_t)tagCopy.GetSimpleValue();
+            if (wifi_delay > wifi_prev_delay) {
+              wifi_prev_delay = wifi_delay;
+              wifi_delay_increases++;
+            }
+            wifi_bits_rcved += packet->GetSize() * 8;
 
             ////////////////////////////////////////////////////
             // Once you implement QueueRecv() and Timeout() functions, uncomment the line below
@@ -838,6 +903,44 @@ void CalculateThroughput()
     Simulator::Schedule (MilliSeconds (THROUGHPUT_MEASUREMENT_INTERVAL_MS), &CalculateThroughput); // Measurement Interval THROUGHPUT_MEASUREMENT_INTERVAL_MS milliseconds
 }
 
+// Problem 2 Changes //
+void newCalculateThroughput()
+{
+    lte_throughput = (lte_bits_rcved - lte_prev_bits_rcved) * 2 / 1000000.0; // in Mbps
+    wifi_throughput = (wifi_bits_rcved - wifi_prev_bits_rcved) * 2 / 1000000.0; // in Mbps
+
+    lte_prev_bits_rcved = lte_bits_rcved;
+    wifi_prev_bits_rcved = wifi_bits_rcved;
+
+    Simulator::Schedule (MilliSeconds (500), &CalculateThroughput); // Measurement Interval 500 milliseconds
+}
+
+// Calculate UE throughput, delays, and router input rates, for both Wifi and LTE paths.
+void calculateValues() {
+    double ueThpLTE = (lte_bits_rcved - lte_prev_bits_rcved) * 2 / 1000000.0; // in Mbps
+    double ueThpWifi = (wifi_bits_rcved - wifi_prev_bits_rcved) * 2 / 1000000.0; // in Mbps
+
+    double wifiDly = wifi_delay;
+    double lteDly = lte_delay;
+
+    double rtThpLTE = (lte_bits_sent - lte_bits_sent_prev) * 2 / 1000000.0;
+    double rtThpWifi = (wifi_bits_sent - wifi_bits_sent_prev) * 2 / 1000000.0;
+
+    lte_bits_sent_prev = lte_bits_sent;
+    wifi_bits_sent_prev = wifi_bits_sent;
+
+    uint32_t now = (uint32_t)Simulator::Now ().GetMilliSeconds();
+
+    dlyWifi << to_string(now) << "\t" << wifiDly << std::endl;
+    dlyLTE << to_string(now) << "\t" << lteDly << std::endl;
+    rtInputToLTE << to_string(now) << "\t" << rtThpLTE << std::endl;
+    rtInputToWifi << to_string(now) << "\t" << rtThpWifi << std::endl;
+    ueLinkThpWifi << to_string(now) << "\t" << ueThpWifi << std::endl;
+    ueLinkThpLTE << to_string(now) << "\t" << ueThpLTE << std::endl;
+
+    Simulator::Schedule (MilliSeconds (500), &calculateValues); // Measurement Interval 500 milliseconds
+}
+
 
 int main(int argc, char *argv[]) {
 
@@ -904,6 +1007,21 @@ int main(int argc, char *argv[]) {
     cmd.AddValue ("inOrderTimeout", "Timeout before transmitting out-of-order packet (Default: 100 (unit:ms))", usedTimeoutPeriod);
 
     cmd.Parse (argc, argv);
+
+    // Update initial values of Wi-Fi and LTE Thp
+    lte_delay = delayValueforLte + delayValueBtwnRemoteHostAndRouter;
+    wifi_delay = delayValueforWifi + delayValueBtwnRemoteHostAndRouter;
+    wifi_prev_delay = wifi_delay;
+    lte_prev_delay = lte_delay;
+    wifi_bw = wifiChannelWidth;
+    lte_bw = chBwMHz;
+    
+    dlyWifi.open(prefix_file_name + "_dly_in_wifi.dat");
+    dlyLTE.open(prefix_file_name + "_dly_in_lte.dat");
+    rtInputToLTE.open(prefix_file_name + "_input_rate_lte.dat");
+    rtInputToWifi.open(prefix_file_name + "_input_rate_wifi.dat");
+    ueLinkThpLTE.open(prefix_file_name + "_thp_in_lte.dat");
+    ueLinkThpWifi.open(prefix_file_name + "_thp_in_wifi.dat");
 
     if ((phyRate.compare("HtMcs1") == 0) || (phyRate.compare("HtMcs7") == 0))
         nStreams = 1;
@@ -1422,6 +1540,8 @@ int main(int argc, char *argv[]) {
 
     // User downlink throughput measurement (bps)
     Simulator::Schedule (Seconds (0.1), &CalculateThroughput);
+    Simulator::Schedule (Seconds (0.5), &newCalculateThroughput);
+    Simulator::Schedule (Seconds (0.5), &calculateValues);
     ////////////////////////////////////////////////////////////////////
 
 
@@ -1453,6 +1573,12 @@ int main(int argc, char *argv[]) {
             tunnel[i].writeOutput();
         }
     }
+    ueLinkThpWifi.close();
+    ueLinkThpLTE.close();
+    dlyWifi.close();
+    dlyLTE.close();
+    rtInputToLTE.close();
+    rtInputToWifi.close();
 //----------------------------------------------------------------------//
     return EXIT_SUCCESS;
 }
